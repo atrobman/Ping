@@ -1,28 +1,31 @@
 import subprocess
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 import re
 from datetime import datetime, timedelta
 from time import sleep
 from tqdm import trange
 import argparse
-from scipy.interpolate import make_interp_spline, BSpline
-import numpy as np
-from brokenaxes import brokenaxes
 
 def ping(host, timeout=None):
-	command = ['ping', "-n", "1", host]
-	if timeout is not None:
+	'''Send a single ping to host
+	Timeout can be any positive integer or None
+	'''
+
+	if not isinstance(timeout, int) and timeout is not None:
+		raise TypeError(f"Timeout not integer or None")
+	
+	command = ['ping', "-n", "1", host] #construct command args
+	if timeout is not None: #add wait time if specified
 		command = command + ["-w", str(timeout)]
 
-	result = subprocess.run(command, capture_output=True)
-	output = str(result.stdout).split("\\r\\n")[2]
-	data = re.search("(?!time=)\d+(?=ms)", output)
+	result = subprocess.run(command, capture_output=True) #run the command and return output to result
+	output = str(result.stdout).split("\\r\\n")[2] #split result on newlines, and get 3rd line (line with results)
+	data = re.search("(?!time=)\d+(?=ms)", output) #extract ping time from result
 
-	if data is not None:
+	if data is not None: #if ping has not failed
 		data = int(data.group())
 	else:
-		data = 0
+		data = 0 #0 is used to denote a failed ping (as it is impossible to have 0ms ping to any host)
 
 	return data
 
@@ -48,24 +51,22 @@ if __name__ == '__main__':
 	args = parser.parse_args()
 
 	hostname = str(args.hostname)
-
 	num_pings = args.num_pings
 	wait_time = args.wait_time
 	data = [None] * num_pings
-
 	start_time = datetime.now()
 
-	for i in trange(num_pings, desc="Pinging", ascii=" ░▒▓█"):
+	for i in trange(num_pings, desc="Pinging", ascii=" ░▒▓█"): #print progress bar
 		data[i] = ping(hostname, wait_time)
-		sleep(wait_time * .001)
+		sleep(wait_time * .001) #sleep for the same length as the maximum ping wait time to avoid overlapping pings
 
 	end_time = datetime.now()
 	td = end_time - start_time
 
-	minV = None
-	maxV = None
-	avgV = 0
-	miss = 0
+	minV = None #minimum ping time (excluding missed pings)
+	maxV = None #maximum ping time (excluding missed pings)
+	avgV = 0 #average ping time (doubles as cumulative ping time temporarily)
+	miss = 0 #number of missed pings
 
 	for i in data:
 		if i != 0:
@@ -85,61 +86,23 @@ if __name__ == '__main__':
 			miss += 1
 
 	if minV == None:
-		minV = 0
+		minV = 0 #default minimum value if all pings missed
 
 	if maxV == None:
-		maxV = 0
+		maxV = 0 #default maximum value if all pings missed
 
-	begin_range = 0
-	ranges = []
+	timestep = td.total_seconds() / num_pings #time per ping (for graphing)
 
-	in_zeroes = False
-
-	timestep = td.total_seconds() / num_pings
-
-	for i, el in enumerate(data):
-		if el == 0 and not in_zeroes and begin_range != i-1:
-			ranges.append( (begin_range * timestep,  (i-1) * timestep) )
-			# begin_range = i
-			in_zeroes = True
-		elif in_zeroes and el != 0:
-			begin_range = i
-			in_zeroes = False
-
-	if in_zeroes == False:
-		ranges.append( (begin_range * timestep, num_pings * timestep) )
-
-	avgV = round(avgV/(num_pings-miss), ndigits=2)
+	avgV = round(avgV/(num_pings-miss), ndigits=2) #find average ping of successful pings
 
 	print("Finished")
 	print(f"Min Ping time: {minV}ms    Max Ping time: {maxV}ms    Average Ping time: {avgV}ms    Missed Pings: {miss} [{round(miss/num_pings*100, ndigits=2)}%]    Total Time: {round(td.total_seconds(), ndigits=2)}s")
 
-	try:
-		if (args.show_graph):
-			# sps1, sps2 = GridSpec(2,1)
-
-			T = [i * td.total_seconds() / num_pings for i in range(num_pings)]
-			# x_axis = np.linspace(0, T[-1], num_pings*10)
-
-			# spl = make_interp_spline(T, data, k=3)
-			# power_smooth = spl(x_axis)
-
-			# bax = brokenaxes(xlims=ranges, subplot_spec=sps1)
-			# # bax.plot(x_axis, power_smooth, 'b-')
-			# bax.plot(T, data, 'b-')
-			# bax.set_ylabel('Ping time (ms)')
-			# bax.set_xlabel('Time (s)')
-
-			# bax = brokenaxes(xlims=((0, T[-1]),), subplot_spec=sps2)
-			# bax.plot(T,data, 'ro-')
-			# bax.set_ylabel('Ping time (ms)')
-			# bax.set_xlabel('Time (s)')
-
-			plt.bar(T, data, width=timestep)
-			plt.ylabel('Ping time (ms)')
-			plt.xlabel('Time (s)')
-			plt.axis(xmin=0-timestep/2, xmax=T[-1]+timestep/2)
-			plt.show()
-	except:
-		print(ranges)
-		raise
+	if (args.show_graph):
+		#show bar graph of ping response time versus time
+		T = [i * td.total_seconds() / num_pings for i in range(num_pings)] #construct X axis
+		plt.bar(T, data, width=timestep)
+		plt.ylabel('Ping time (ms)')
+		plt.xlabel('Time (s)')
+		plt.axis(xmin=0-timestep/2, xmax=T[-1]+timestep/2) #extend graph slightly left and right to avoid cutting off edge-most bars
+		plt.show()
